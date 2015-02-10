@@ -364,6 +364,17 @@ public class TransportExecutor implements Executor, TaskExecutor {
         }
 
         @Override
+        public ImmutableList<Task> visitUpsertByIdNode2(UpsertByIdNode2 node, UUID jobId) {
+            return singleTask(new UpsertByIdTask2(jobId,
+                    clusterService,
+                    settings,
+                    transportActionProvider.transportShardUpsertAction2(),
+                    transportActionProvider.transportCreateIndexAction(),
+                    functions,
+                    node));
+        }
+
+        @Override
         public ImmutableList<Task> visitDropTableNode(DropTableNode node, UUID jobId) {
             return singleTask(new DropTableTask(jobId,
                     transportActionProvider.transportDeleteIndexTemplateAction(),

@@ -69,6 +69,7 @@ public class TransportActionProvider {
     private final Provider<TransportQueryShardAction> transportQueryShardActionProvider;
     private final Provider<TransportUpdateAction> transportUpdateActionProvider;
     private final Provider<TransportShardUpsertAction> transportShardUpsertActionProvider;
+    private final Provider<TransportShardUpsertAction2> transportShardUpsertActionProvider2;
     private final Provider<TransportPutMappingAction> transportPutMappingActionProvider;
     private final Provider<TransportRefreshAction> transportRefreshActionProvider;
     private final Provider<TransportUpdateSettingsAction> transportUpdateSettingsActionProvider;
@@ -90,6 +91,7 @@ public class TransportActionProvider {
                                    Provider<TransportIndexAction> transportIndexActionProvider,
                                    Provider<TransportUpdateAction> transportUpdateActionProvider,
                                    Provider<TransportShardUpsertAction> transportShardUpsertActionProvider,
+                                   Provider<TransportShardUpsertAction2> transportShardUpsertActionProvider2,
                                    Provider<TransportQueryShardAction> transportQueryShardActionProvider,
                                    Provider<TransportSearchAction> transportSearchActionProvider,
                                    Provider<SearchServiceTransportAction> searchServiceTransportActionProvider,
@@ -111,6 +113,7 @@ public class TransportActionProvider {
         this.transportQueryShardActionProvider = transportQueryShardActionProvider;
         this.transportUpdateActionProvider = transportUpdateActionProvider;
         this.transportShardUpsertActionProvider = transportShardUpsertActionProvider;
+        this.transportShardUpsertActionProvider2 = transportShardUpsertActionProvider2;
         this.transportCollectNodeActionProvider = transportCollectNodeActionProvider;
         this.transportMergeNodeActionProvider = transportMergeNodeActionProvider;
         this.transportSearchActionProvider = transportSearchActionProvider;
@@ -175,6 +178,10 @@ public class TransportActionProvider {
 
     public TransportShardUpsertAction transportShardUpsertAction() {
         return transportShardUpsertActionProvider.get();
+    }
+
+    public TransportShardUpsertAction2 transportShardUpsertAction2() {
+        return transportShardUpsertActionProvider2.get();
     }
 
     public TransportShardUpsertActionDelegate transportShardUpsertActionDelegate() {

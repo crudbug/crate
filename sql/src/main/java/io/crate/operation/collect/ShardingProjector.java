@@ -51,7 +51,10 @@ public class ShardingProjector implements Projector {
     @Nullable
     private Input<?> routingInput;
 
-    private IdAndRouting idAndRouting;
+    private String id;
+    @Nullable
+    private String routing;
+
 
     public ShardingProjector(Functions functions,
                              List<Symbol> primaryKeySymbols,
@@ -59,7 +62,6 @@ public class ShardingProjector implements Projector {
         visitor = new Visitor(functions);
         this.primaryKeySymbols = primaryKeySymbols;
         this.routingSymbol = routingSymbol;
-        idAndRouting = new IdAndRouting();
     }
 
     @Override
@@ -82,7 +84,7 @@ public class ShardingProjector implements Projector {
         for (CollectExpression collectExpression : visitorContext.collectExpressions()) {
             collectExpression.setNextRow(args);
         }
-        idAndRouting.applyInputs(primaryKeyInputs, routingInput);
+        applyInputs(primaryKeyInputs, routingInput);
         return true;
     }
 
@@ -104,57 +106,48 @@ public class ShardingProjector implements Projector {
         throw new UnsupportedOperationException("ShardingProjector does not support downstreams");
     }
 
-    public IdAndRouting idAndRouting() {
-        return idAndRouting;
+    private void applyInputs(List<Input<?>> primaryKeyInputs, @Nullable Input<?> routingInput) {
+        if (primaryKeyInputs.size() == 0) {
+            id = Strings.base64UUID();
+        } else if (primaryKeyInputs.size() == 1) {
+            id = BytesRefs.toString(primaryKeyInputs.get(0).value());
+        } else {
+            BytesStreamOutput out = new BytesStreamOutput();
+            try {
+                out.writeVInt(primaryKeyInputs.size());
+                for (Input<?> input : primaryKeyInputs) {
+                    Object value = input.value();
+                    if (value == null) {
+                        throw new IllegalArgumentException("A primary key value must not be null");
+                    }
+                    out.writeString(BytesRefs.toString(value));
+                }
+                out.close();
+            } catch (IOException e) {
+                //
+            }
+            id = Base64.encodeBytes(out.bytes().toBytes());
+        }
+        if (routingInput != null) {
+            routing = BytesRefs.toString(routingInput.value());
+        } else {
+            routing = null;
+        }
     }
 
-    public static class IdAndRouting {
+    /**
+     * Returns the through collected inputs generated id
+     */
+    public String id() {
+        return id;
+    }
 
-        private String id;
-        @Nullable
-        private String routing;
-
-        IdAndRouting() {
-        }
-
-        protected void applyInputs(List<Input<?>> primaryKeyInputs, @Nullable Input<?> routingInput) {
-            if (primaryKeyInputs.size() == 0) {
-                id = Strings.base64UUID();
-            } else if (primaryKeyInputs.size() == 1) {
-                id = BytesRefs.toString(primaryKeyInputs.get(0).value());
-            } else {
-                BytesStreamOutput out = new BytesStreamOutput();
-                try {
-                    out.writeVInt(primaryKeyInputs.size());
-                    for (Input<?> input : primaryKeyInputs) {
-                        Object value = input.value();
-                        if (value == null) {
-                            throw new IllegalArgumentException("A primary key value must not be null");
-                        }
-                        out.writeString(BytesRefs.toString(value));
-                    }
-                    out.close();
-                } catch (IOException e) {
-                    //
-                }
-                id = Base64.encodeBytes(out.bytes().toBytes());
-            }
-            if (routingInput != null) {
-                routing = BytesRefs.toString(routingInput.value());
-            } else {
-                routing = null;
-            }
-        }
-
-        public String id() {
-            return id;
-        }
-
-        @Nullable
-        public String routing() {
-            return routing;
-        }
-
+    /**
+     * Returns the collected routing value (if available)
+     */
+    @Nullable
+    public String routing() {
+        return routing;
     }
 
     static class VisitorContext extends ImplementationSymbolVisitor.Context {}

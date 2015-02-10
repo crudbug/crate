@@ -302,7 +302,7 @@ public class Setup {
     }
 
     public void setUpCharacters() {
-        transportExecutor.exec("create table characters (id int primary key, name string, female boolean)");
+        transportExecutor.exec("create table characters (id int primary key, name string, female boolean, details object)");
         transportExecutor.ensureGreen();
         transportExecutor.exec("insert into characters (id, name, female) values (?, ?, ?)",
                 new Object[][]{

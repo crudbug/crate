@@ -22,15 +22,20 @@
 package io.crate.executor.transport;
 
 
-import com.google.common.base.Joiner;
-import com.google.common.base.Splitter;
 import io.crate.executor.transport.task.elasticsearch.FieldExtractor;
 import io.crate.executor.transport.task.elasticsearch.FieldExtractorFactory;
 import io.crate.executor.transport.task.elasticsearch.SymbolToFieldExtractor;
+import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.Functions;
 import io.crate.metadata.doc.DocSysColumns;
+import io.crate.operation.AssignmentSymbolVisitor;
+import io.crate.operation.ImplementationSymbolVisitor;
+import io.crate.operation.Input;
+import io.crate.operation.collect.CollectExpression;
 import io.crate.planner.symbol.InputColumn;
 import io.crate.planner.symbol.Reference;
+import io.crate.planner.symbol.Symbol;
+import io.crate.planner.symbol.SymbolFormatter;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ExceptionsHelper;
@@ -48,6 +53,7 @@ import org.elasticsearch.cluster.routing.ShardIterator;
 import org.elasticsearch.cluster.routing.operation.plain.Preference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.inject.Singleton;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
@@ -75,30 +81,36 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
-public class TransportShardUpsertAction extends TransportShardReplicationOperationAction<ShardUpsertRequest, ShardUpsertRequest, ShardUpsertResponse> {
+@Singleton
+public class TransportShardUpsertAction2 extends TransportShardReplicationOperationAction<ShardUpsertRequest2, ShardUpsertRequest2, ShardUpsertResponse> {
 
-    private final static String ACTION_NAME = "indices:crate/data/write/upsert";
+    private final static String ACTION_NAME = "indices:crate/data/write/upsert2";
     private final static SymbolToFieldExtractor SYMBOL_TO_FIELD_EXTRACTOR = new SymbolToFieldExtractor(new GetResultFieldExtractorFactory());
 
     private final TransportIndexAction indexAction;
     private final IndicesService indicesService;
     private final Functions functions;
+    private final AssignmentSymbolVisitor assignmentSymbolVisitor;
+    private final SymbolToInputVisitor symbolToInputVisitor;
 
     @Inject
-    public TransportShardUpsertAction(Settings settings,
-                                      ThreadPool threadPool,
-                                      ClusterService clusterService,
-                                      TransportService transportService,
-                                      ActionFilters actionFilters,
-                                      TransportIndexAction indexAction,
-                                      IndicesService indicesService,
-                                      ShardStateAction shardStateAction,
-                                      Functions functions) {
+    public TransportShardUpsertAction2(Settings settings,
+                                       ThreadPool threadPool,
+                                       ClusterService clusterService,
+                                       TransportService transportService,
+                                       ActionFilters actionFilters,
+                                       TransportIndexAction indexAction,
+                                       IndicesService indicesService,
+                                       ShardStateAction shardStateAction,
+                                       Functions functions) {
         super(settings, ACTION_NAME, transportService, clusterService, indicesService, threadPool, shardStateAction, actionFilters);
         this.indexAction = indexAction;
         this.indicesService = indicesService;
         this.functions = functions;
+        assignmentSymbolVisitor = new AssignmentSymbolVisitor();
+        symbolToInputVisitor = new SymbolToInputVisitor(functions);
     }
 
     @Override
@@ -107,13 +119,13 @@ public class TransportShardUpsertAction extends TransportShardReplicationOperati
     }
 
     @Override
-    protected ShardUpsertRequest newRequestInstance() {
-        return new ShardUpsertRequest();
+    protected ShardUpsertRequest2 newRequestInstance() {
+        return new ShardUpsertRequest2();
     }
 
     @Override
-    protected ShardUpsertRequest newReplicaRequestInstance() {
-        return new ShardUpsertRequest();
+    protected ShardUpsertRequest2 newReplicaRequestInstance() {
+        return new ShardUpsertRequest2();
     }
 
     @Override
@@ -143,17 +155,31 @@ public class TransportShardUpsertAction extends TransportShardReplicationOperati
     }
 
     @Override
-    protected PrimaryResponse<ShardUpsertResponse, ShardUpsertRequest> shardOperationOnPrimary(ClusterState clusterState, PrimaryOperationRequest shardRequest) {
+    protected PrimaryResponse<ShardUpsertResponse, ShardUpsertRequest2> shardOperationOnPrimary(ClusterState clusterState, PrimaryOperationRequest shardRequest) {
         ShardUpsertResponse shardUpsertResponse = new ShardUpsertResponse(shardRequest.shardId.getIndex());
-        ShardUpsertRequest request = shardRequest.request;
+        ShardUpsertRequest2 request = shardRequest.request;
+        AssignmentSymbolVisitor.Context implContextUpdate = null;
+        SymbolToInputContext implContextInsert = null;
+        if (request.updateAssignments() != null) {
+            implContextUpdate = assignmentSymbolVisitor.process(request.updateAssignments().values());
+        }
+        if (request.insertAssignments() != null) {
+            implContextInsert = new SymbolToInputContext(request.insertAssignments().size());
+            for (Map.Entry<Reference, Symbol> entry : request.insertAssignments().entrySet()) {
+                implContextInsert.referenceInputMap.put(entry.getKey(), symbolToInputVisitor.process(entry.getValue(), implContextInsert));
+            }
+        }
+
         for (int i = 0; i < request.locations().size(); i++) {
             int location = request.locations().get(i);
-            ShardUpsertRequest.Item item = request.items().get(i);
+            ShardUpsertRequest2.Item item = request.items().get(i);
             try {
                 IndexResponse indexResponse = indexItem(
                         request,
                         item, shardRequest.shardId,
-                        item.insertValues() != null, // try insert first
+                        implContextUpdate,
+                        implContextInsert,
+                        request.insertAssignments() != null, // try insert first
                         0);
                 shardUpsertResponse.add(location,
                         new ShardUpsertResponse.Response(
@@ -184,33 +210,35 @@ public class TransportShardUpsertAction extends TransportShardReplicationOperati
 
     }
 
-    public IndexResponse indexItem(ShardUpsertRequest request,
-                          ShardUpsertRequest.Item item,
-                          ShardId shardId,
-                          boolean tryInsertFirst,
-                          int retryCount) throws ElasticsearchException {
+    public IndexResponse indexItem(ShardUpsertRequest2 request,
+                                   ShardUpsertRequest2.Item item,
+                                   ShardId shardId,
+                                   AssignmentSymbolVisitor.Context implContextUpdate,
+                                   SymbolToInputContext implContextInsert,
+                                   boolean tryInsertFirst,
+                                   int retryCount) throws ElasticsearchException {
 
         try {
             IndexRequest indexRequest;
             if (tryInsertFirst) {
                 // try insert first without fetching the document
                 try {
-                    indexRequest = new IndexRequest(prepareInsert(request, item), request);
+                    indexRequest = new IndexRequest(prepareInsert(request, item, implContextInsert), request);
                 } catch (IOException e) {
                     throw ExceptionsHelper.convertToElastic(e);
                 }
             } else {
-                indexRequest = new IndexRequest(prepareUpdate(request, item, shardId), request);
+                indexRequest = new IndexRequest(prepareUpdate(request, item, shardId, implContextUpdate), request);
             }
             return indexAction.execute(indexRequest).actionGet();
         } catch (Throwable t) {
             if (t instanceof VersionConflictEngineException
                     && retryCount < item.retryOnConflict()) {
-                return indexItem(request, item, shardId, false, retryCount + 1);
-            } else if (tryInsertFirst && item.updateAssignments() != null
+                return indexItem(request, item, shardId, implContextUpdate, implContextInsert, false, retryCount + 1);
+            } else if (tryInsertFirst && request.updateAssignments() != null
                     && t instanceof DocumentAlreadyExistsException) {
                 // insert failed, document already exists, try update
-                return indexItem(request, item, shardId, false, 0);
+                return indexItem(request, item, shardId, implContextUpdate, implContextInsert, false, 0);
             } else {
                 throw t;
             }
@@ -225,7 +253,10 @@ public class TransportShardUpsertAction extends TransportShardReplicationOperati
      * TODO: detect a NOOP and return an update response if true
      */
     @SuppressWarnings("unchecked")
-    public IndexRequest prepareUpdate(ShardUpsertRequest request, ShardUpsertRequest.Item item, ShardId shardId) throws ElasticsearchException {
+    public IndexRequest prepareUpdate(ShardUpsertRequest2 request,
+                                      ShardUpsertRequest2.Item item,
+                                      ShardId shardId,
+                                      AssignmentSymbolVisitor.Context implContext) throws ElasticsearchException {
         IndexService indexService = indicesService.indexServiceSafe(shardId.getIndex());
         IndexShard indexShard = indexService.shardSafe(shardId.id());
         final GetResult getResult = indexShard.getService().get(request.type(), item.id(),
@@ -249,22 +280,32 @@ public class TransportShardUpsertAction extends TransportShardReplicationOperati
 
         updatedSourceAsMap = sourceAndContent.v2();
 
-        final SymbolToFieldExtractorContext ctx = new SymbolToFieldExtractorContext(functions, item.updateAssignments().length);
-        Map<String, FieldExtractor> extractors = new HashMap<>(item.updateAssignments().length);
-        for (int i = 0; i < request.updateColumns().length; i++) {
-            extractors.put(request.updateColumns()[i], SYMBOL_TO_FIELD_EXTRACTOR.convert(item.updateAssignments()[i], ctx));
+        // collect inputs
+        Set<CollectExpression<?>> collectExpressions = implContext.collectExpressions();
+        for (CollectExpression<?> collectExpression : collectExpressions) {
+            collectExpression.setNextRow(item.row());
         }
 
-        Map<String, Object> pathsToUpdate = new HashMap<>(extractors.size());
-        for (Map.Entry<String, FieldExtractor> entry : extractors.entrySet()) {
+        // extract references and evaluate assignments
+        final SymbolToFieldExtractor.Context extractorContext = new SymbolToFieldExtractorContext(
+                functions,
+                request.updateAssignments().size(),
+                implContext);
+        Map<Reference, FieldExtractor> extractors = new HashMap<>(request.updateAssignments().size());
+        for (Map.Entry<Reference, Symbol> entry : request.updateAssignments().entrySet()) {
+            extractors.put(entry.getKey(), SYMBOL_TO_FIELD_EXTRACTOR.convert(entry.getValue(), extractorContext));
+        }
+
+        Map<ColumnIdent, Object> mapToUpdate = new HashMap<>(extractors.size());
+        for (Map.Entry<Reference, FieldExtractor> entry : extractors.entrySet()) {
             /**
              * NOTE: mapping isn't applied. So if an Insert was done using the ES Rest Endpoint
              * the data might be returned in the wrong format (date as string instead of long)
              */
-            pathsToUpdate.put(entry.getKey(), entry.getValue().extract(getResult));
+            mapToUpdate.put(entry.getKey().ident().columnIdent(), entry.getValue().extract(getResult));
         }
 
-        updateSourceByPaths(updatedSourceAsMap, pathsToUpdate);
+        updateSourceMap(updatedSourceAsMap, mapToUpdate);
 
         final IndexRequest indexRequest = Requests.indexRequest(request.index())
                 .type(request.type())
@@ -277,18 +318,26 @@ public class TransportShardUpsertAction extends TransportShardReplicationOperati
         return indexRequest;
     }
 
-    private IndexRequest prepareInsert(ShardUpsertRequest request, ShardUpsertRequest.Item item) throws IOException {
+    private IndexRequest prepareInsert(ShardUpsertRequest2 request,
+                                       ShardUpsertRequest2.Item item,
+                                       SymbolToInputContext implContext) throws IOException {
+        // collect inputs
+        Set<CollectExpression<?>> collectExpressions = implContext.collectExpressions();
+        for (CollectExpression<?> collectExpression : collectExpressions) {
+            collectExpression.setNextRow(item.row());
+        }
+
         BytesRef rawSource = null;
         XContentBuilder builder = XContentFactory.jsonBuilder().startObject();
-        for (int i = 0; i < item.insertValues().length; i++) {
-            Reference ref = request.insertColumns()[i];
-            if (ref.info().ident().columnIdent().equals(DocSysColumns.RAW)) {
-                rawSource = (BytesRef)item.insertValues()[i];
+        for (Map.Entry<Reference, Input<?>> entry : implContext.referenceInputMap.entrySet()) {
+            String columnName = entry.getKey().ident().columnIdent().fqn();
+            if (columnName.equals(DocSysColumns.RAW)) {
+                rawSource = (BytesRef)entry.getValue().value();
                 break;
             }
-            builder.field(ref.ident().columnIdent().fqn(), item.insertValues()[i]);
+            builder.field(columnName, entry.getValue().value());
         }
-        IndexRequest indexRequest = Requests.indexRequest(request.index()).type(request.type()).id(item.id()).routing(item.routing())
+        IndexRequest indexRequest = Requests.indexRequest(request.index()).type(request.type()).id(item.id()).routing(request.routing())
                 .create(true).operationThreaded(false);
         if (rawSource != null) {
             indexRequest.source(rawSource.bytes);
@@ -307,39 +356,58 @@ public class TransportShardUpsertAction extends TransportShardReplicationOperati
      * TODO: detect NOOP
      */
     @SuppressWarnings("unchecked")
-    private void updateSourceByPaths(Map<String, Object> source, Map<String, Object> changes) {
-        for (Map.Entry<String, Object> changesEntry : changes.entrySet()) {
-            if (changesEntry.getKey().contains(".")) {
+    private void updateSourceMap(Map<String, Object> source, Map<ColumnIdent, Object> changes) {
+        for (Map.Entry<ColumnIdent, Object> changesEntry : changes.entrySet()) {
+            if (!changesEntry.getKey().path().isEmpty()) {
                 // sub-path detected, dive recursive to the wanted tree element
-                List<String> path = Splitter.on(".").splitToList(changesEntry.getKey());
+                String currentKey = changesEntry.getKey().name();
+                if (!source.containsKey(currentKey)) {
+                    // insert parent tree element
+                    source.put(currentKey, new HashMap<String, Object>());
+                }
+                Map<List<String>, Object> subChanges = new HashMap<>(1);
+                subChanges.put(changesEntry.getKey().path(), changesEntry.getValue());
+                updateSourcePath((Map<String, Object>) source.get(currentKey), subChanges);
+            } else {
+                // overwrite or insert the field
+                source.put(changesEntry.getKey().name(), changesEntry.getValue());
+            }
+        }
+    }
+
+    private void updateSourcePath(Map<String, Object> source, Map<List<String>, Object> changes) {
+        for (Map.Entry<List<String>, Object> changesEntry : changes.entrySet()) {
+            if (changesEntry.getKey().size() > 1) {
+                // sub-path detected, dive recursive to the wanted tree element
+                List<String> path = changesEntry.getKey();
                 String currentKey = path.get(0);
                 if (!source.containsKey(currentKey)) {
                     // insert parent tree element
                     source.put(currentKey, new HashMap<String, Object>());
                 }
-                Map<String, Object> subChanges = new HashMap<>();
-                subChanges.put(Joiner.on(".").join(path.subList(1, path.size())),
-                        changesEntry.getValue());
-                updateSourceByPaths((Map<String, Object>) source.get(currentKey), subChanges);
+                Map<List<String>, Object> subChanges = new HashMap<>(1);
+                subChanges.put(path.subList(1, path.size()), changesEntry.getValue());
+                updateSourcePath((Map<String, Object>) source.get(currentKey), subChanges);
             } else {
                 // overwrite or insert the field
-                source.put(changesEntry.getKey(), changesEntry.getValue());
+                source.put(changesEntry.getKey().get(0), changesEntry.getValue());
             }
         }
     }
 
     static class SymbolToFieldExtractorContext extends SymbolToFieldExtractor.Context {
+        private final AssignmentSymbolVisitor.Context implContext;
 
-        public SymbolToFieldExtractorContext(Functions functions, int size) {
+        public SymbolToFieldExtractorContext(Functions functions, int size, AssignmentSymbolVisitor.Context implContext) {
             super(functions, size);
+            this.implContext = implContext;
         }
 
         @Override
         public Object inputValueFor(InputColumn inputColumn) {
-            throw new UnsupportedOperationException("SymbolToFieldExtractorContext does not support resolving InputColumn");
+            return implContext.collectExpressionFor(inputColumn).value();
         }
     }
-
 
 
     static class GetResultFieldExtractorFactory implements FieldExtractorFactory<GetResult, SymbolToFieldExtractor.Context> {
@@ -352,6 +420,26 @@ public class TransportShardUpsertAction extends TransportShardReplicationOperati
                             reference.info().ident().columnIdent().fqn(), getResult.sourceAsMap());
                 }
             };
+        }
+    }
+
+    static class SymbolToInputContext extends ImplementationSymbolVisitor.Context {
+        public Map<Reference, Input<?>> referenceInputMap;
+
+        public SymbolToInputContext(int inputsSize) {
+            referenceInputMap = new HashMap<>(inputsSize);
+        }
+    }
+
+    static class SymbolToInputVisitor extends ImplementationSymbolVisitor {
+
+        public SymbolToInputVisitor(Functions functions) {
+            super(null, functions, null);
+        }
+
+        @Override
+        public Input<?> visitReference(Reference symbol, Context context) {
+            throw new IllegalArgumentException(SymbolFormatter.format("Cannot handle Reference %s", symbol));
         }
     }
 

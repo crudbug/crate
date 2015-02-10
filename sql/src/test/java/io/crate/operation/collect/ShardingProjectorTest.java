@@ -58,11 +58,10 @@ public class ShardingProjectorTest {
                 new ShardingProjector(functions, ImmutableList.<Symbol>of(), null);
         shardingProjector.startProjection();
         shardingProjector.setNextRow(new Object[]{});
-        ShardingProjector.IdAndRouting idAndRouting = shardingProjector.idAndRouting();
 
         // auto-generated id, no special routing
-        assertNotNull(idAndRouting.id());
-        assertNull(idAndRouting.routing());
+        assertNotNull(shardingProjector.id());
+        assertNull(shardingProjector.routing());
     }
 
     @Test
@@ -71,11 +70,10 @@ public class ShardingProjectorTest {
                 new ShardingProjector(functions, ImmutableList.<Symbol>of(), new InputColumn(1));
         shardingProjector.startProjection();
         shardingProjector.setNextRow(new Object[]{1, "hoschi"});
-        ShardingProjector.IdAndRouting idAndRouting = shardingProjector.idAndRouting();
 
         // auto-generated id, special routing
-        assertNotNull(idAndRouting.id());
-        assertThat(idAndRouting.routing(), is("hoschi"));
+        assertNotNull(shardingProjector.id());
+        assertThat(shardingProjector.routing(), is("hoschi"));
     }
 
     @Test
@@ -85,11 +83,10 @@ public class ShardingProjectorTest {
                 new ShardingProjector(functions, primaryKeySymbols, null);
         shardingProjector.startProjection();
         shardingProjector.setNextRow(new Object[]{1, "hoschi"});
-        ShardingProjector.IdAndRouting idAndRouting = shardingProjector.idAndRouting();
 
         // compound encoded id, no special routing
-        assertThat(idAndRouting.id(), is("AgExBmhvc2NoaQ=="));
-        assertNull(idAndRouting.routing());
+        assertThat(shardingProjector.id(), is("AgExBmhvc2NoaQ=="));
+        assertNull(shardingProjector.routing());
     }
 
     @Test
@@ -99,11 +96,10 @@ public class ShardingProjectorTest {
                 new ShardingProjector(functions, primaryKeySymbols, new InputColumn(1));
         shardingProjector.startProjection();
         shardingProjector.setNextRow(new Object[]{1, "hoschi"});
-        ShardingProjector.IdAndRouting idAndRouting = shardingProjector.idAndRouting();
 
         // compound encoded id, special routing
-        assertThat(idAndRouting.id(), is("AgZob3NjaGkBMQ=="));
-        assertThat(idAndRouting.routing(), is("hoschi"));
+        assertThat(shardingProjector.id(), is("AgZob3NjaGkBMQ=="));
+        assertThat(shardingProjector.routing(), is("hoschi"));
     }
 
     @Test
@@ -114,12 +110,11 @@ public class ShardingProjectorTest {
         shardingProjector.startProjection();
 
         shardingProjector.setNextRow(new Object[]{1, "hoschi"});
-        ShardingProjector.IdAndRouting idAndRouting = shardingProjector.idAndRouting();
-        assertThat(idAndRouting.id(), is("AgZob3NjaGkBMQ=="));
-        assertThat(idAndRouting.routing(), is("hoschi"));
+        assertThat(shardingProjector.id(), is("AgZob3NjaGkBMQ=="));
+        assertThat(shardingProjector.routing(), is("hoschi"));
 
         shardingProjector.setNextRow(new Object[]{2, "galoschi"});
-        assertThat(idAndRouting.id(), is("AghnYWxvc2NoaQEy"));
-        assertThat(idAndRouting.routing(), is("galoschi"));
+        assertThat(shardingProjector.id(), is("AghnYWxvc2NoaQEy"));
+        assertThat(shardingProjector.routing(), is("galoschi"));
     }
 }

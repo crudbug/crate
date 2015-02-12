@@ -27,6 +27,7 @@ import io.crate.exceptions.ColumnUnknownException;
 import io.crate.metadata.Path;
 import io.crate.planner.Plan;
 import io.crate.planner.PlanVisitor;
+import io.crate.planner.projection.Projection;
 import io.crate.planner.symbol.Field;
 
 import javax.annotation.Nullable;
@@ -79,5 +80,14 @@ public class NonDistributedGroupBy implements PlannedAnalyzedRelation, Plan {
     @Override
     public Plan plan() {
         return this;
+    }
+
+    @Override
+    public void addProjection(Projection projection) {
+        int idx = 0;
+        if(localMergeNode().projections().size() > 0) {
+            idx = localMergeNode().projections().size() - 1;
+        }
+        this.localMergeNode.projections().set(idx, projection);
     }
 }

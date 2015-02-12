@@ -28,6 +28,7 @@ import io.crate.metadata.Path;
 import io.crate.planner.Plan;
 import io.crate.planner.PlanVisitor;
 import io.crate.planner.node.dql.DQLPlanNode;
+import io.crate.planner.projection.Projection;
 import io.crate.planner.symbol.Field;
 
 import javax.annotation.Nullable;
@@ -74,5 +75,10 @@ public class Upsert implements PlannedAnalyzedRelation, Plan {
     @Override
     public Plan plan() {
         return this;
+    }
+
+    @Override
+    public void addProjection(Projection projection) {
+        throw new UnsupportedOperationException("adding projection not supported");
     }
 }

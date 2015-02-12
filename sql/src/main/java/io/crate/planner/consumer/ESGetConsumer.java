@@ -85,6 +85,10 @@ public class ESGetConsumer implements Consumer {
                 return null;
             }
 
+            if (tableInfo.schemaInfo().systemSchema()) {
+                return null;
+            }
+
             String indexName;
             if (tableInfo.isPartitioned()) {
                 /**

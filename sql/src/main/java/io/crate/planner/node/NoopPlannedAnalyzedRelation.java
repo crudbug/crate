@@ -28,6 +28,7 @@ import io.crate.exceptions.ColumnUnknownException;
 import io.crate.metadata.Path;
 import io.crate.planner.NoopPlan;
 import io.crate.planner.Plan;
+import io.crate.planner.projection.Projection;
 import io.crate.planner.symbol.Field;
 
 import javax.annotation.Nullable;
@@ -44,6 +45,11 @@ public class NoopPlannedAnalyzedRelation implements PlannedAnalyzedRelation {
     @Override
     public Plan plan() {
         return NoopPlan.INSTANCE;
+    }
+
+    @Override
+    public void addProjection(Projection projection) {
+        throw new UnsupportedOperationException("adding projection not supported");
     }
 
     @Override

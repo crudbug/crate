@@ -30,6 +30,7 @@ import io.crate.analyze.WhereClause;
 import io.crate.metadata.ReferenceInfo;
 import io.crate.metadata.Routing;
 import io.crate.planner.node.PlanNodeVisitor;
+import io.crate.planner.projection.Projection;
 import io.crate.planner.symbol.Symbol;
 import io.crate.planner.symbol.Symbols;
 import org.elasticsearch.common.Nullable;
@@ -150,5 +151,10 @@ public class QueryThenFetchNode extends ESDQLPlanNode {
                 oldNode.whereClause(),
                 oldNode.partitionBy()
         );
+    }
+
+    @Override
+    public void addProjection(Projection projection) {
+        throw new UnsupportedOperationException("adding projection not supported");
     }
 }

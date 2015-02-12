@@ -28,6 +28,7 @@ import io.crate.Constants;
 import io.crate.analyze.*;
 import io.crate.analyze.relations.AnalyzedRelation;
 import io.crate.analyze.relations.AnalyzedRelationVisitor;
+import io.crate.analyze.relations.PlannedAnalyzedRelation;
 import io.crate.analyze.relations.TableRelation;
 import io.crate.analyze.where.WhereClauseAnalyzer;
 import io.crate.exceptions.VersionInvalidException;
@@ -35,8 +36,10 @@ import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Routing;
 import io.crate.metadata.table.TableInfo;
+import io.crate.planner.Plan;
 import io.crate.planner.PlanNodeBuilder;
 import io.crate.planner.node.NoopPlannedAnalyzedRelation;
+import io.crate.planner.node.dml.QueryAndFetch;
 import io.crate.planner.node.dql.CollectNode;
 import io.crate.planner.node.dql.DistributedGroupBy;
 import io.crate.planner.node.dql.GroupByConsumer;
@@ -96,7 +99,7 @@ public class InsertFromSubQueryConsumer implements Consumer {
 
         @Override
         public AnalyzedRelation visitInsertFromQuery(InsertFromSubQueryAnalyzedStatement insertFromSubQueryAnalyzedStatement, Context context) {
-            List<ColumnIdent> columns = Lists.transform(insertFromSubQueryAnalyzedStatement.columns(), new com.google.common.base.Function<Reference, ColumnIdent>() {
+            Lists.transform(insertFromSubQueryAnalyzedStatement.columns(), new com.google.common.base.Function<Reference, ColumnIdent>() {
                 @Nullable
                 @Override
                 public ColumnIdent apply(@Nullable Reference input) {
@@ -120,7 +123,24 @@ public class InsertFromSubQueryConsumer implements Consumer {
 
             context.insertVisited = true;
             context.indexWriterProjection = indexWriterProjection;
-            return insertFromSubQueryAnalyzedStatement.subQueryRelation().accept(this, context);
+            ConsumingPlanner planner = new ConsumingPlanner(this.analysisMetaData);
+            planner.consumers.remove(5); // TODO: find a better solution than removing ESGetConsumer
+            planner.consumers.remove(5); // QueryThenFetchConsumer
+            planner.consumers.remove(3); // ESCOuntConsumer
+
+            Plan innerRelation = planner.plan(insertFromSubQueryAnalyzedStatement.subQueryRelation());
+
+            if (innerRelation instanceof PlannedAnalyzedRelation) {
+                PlannedAnalyzedRelation analyzedRelation = (PlannedAnalyzedRelation)innerRelation;
+                analyzedRelation.addProjection(indexWriterProjection);
+                if(analyzedRelation instanceof DistributedGroupBy || analyzedRelation instanceof QueryAndFetch) {
+                    analyzedRelation.addProjection(QueryAndFetchConsumer.localMergeProjection(this.analysisMetaData.functions()));
+                }
+                context.result = true;
+                return analyzedRelation;
+            } else {
+                return insertFromSubQueryAnalyzedStatement;
+            }
         }
 
         @Override

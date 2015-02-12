@@ -32,7 +32,7 @@ import java.util.List;
 
 public class ConsumingPlanner {
 
-    private final List<Consumer> consumers = new ArrayList<>();
+    public final List<Consumer> consumers = new ArrayList<>();
 
     public ConsumingPlanner(AnalysisMetaData analysisMetaData) {
         consumers.add(new NonDistributedGroupByConsumer(analysisMetaData));

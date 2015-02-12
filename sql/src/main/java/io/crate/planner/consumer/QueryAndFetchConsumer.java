@@ -37,7 +37,6 @@ import io.crate.metadata.table.TableInfo;
 import io.crate.operation.aggregation.impl.SumAggregation;
 import io.crate.operation.predicate.MatchPredicate;
 import io.crate.planner.PlanNodeBuilder;
-import io.crate.planner.RowGranularity;
 import io.crate.planner.node.dml.QueryAndFetch;
 import io.crate.planner.node.dql.CollectNode;
 import io.crate.planner.node.dql.MergeNode;
@@ -110,12 +109,6 @@ public class QueryAndFetchConsumer implements Consumer {
                 context.result = true;
                 return GlobalAggregateConsumer.globalAggregates(table, tableRelation, whereClause, null);
             } else {
-               if(tableInfo.rowGranularity().ordinal() >= RowGranularity.DOC.ordinal() &&
-                        tableInfo.getRouting(whereClause, null).hasLocations() &&
-                        !tableInfo.schemaInfo().systemSchema()){
-                   return table;
-               }
-
                context.result = true;
                return QueryAndFetchConsumer.normalSelect(table.querySpec(), whereClause, tableRelation,
                        null, analysisMetaData.functions());
@@ -187,6 +180,7 @@ public class QueryAndFetchConsumer implements Consumer {
             List<Symbol> toCollect;
             List<Symbol> orderByInputColumns = null;
             if (orderBy != null){
+                tableRelation.validateOrderBy(orderBy);
                 List<Symbol> orderBySymbols = tableRelation.resolve(orderBy.orderBySymbols());
                 toCollect = new ArrayList<>(outputSymbols.size() + orderBySymbols.size());
                 toCollect.addAll(outputSymbols);

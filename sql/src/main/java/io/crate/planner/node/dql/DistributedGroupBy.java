@@ -21,22 +21,28 @@
 
 package io.crate.planner.node.dql;
 
-import io.crate.analyze.relations.PlannedAnalyzedRelation;
+import com.google.common.collect.ImmutableList;
 import io.crate.analyze.relations.AnalyzedRelationVisitor;
+import io.crate.analyze.relations.PlannedAnalyzedRelation;
 import io.crate.exceptions.ColumnUnknownException;
 import io.crate.metadata.Path;
 import io.crate.planner.Plan;
+import io.crate.planner.PlanNodeBuilder;
 import io.crate.planner.PlanVisitor;
+import io.crate.planner.projection.AggregationProjection;
+import io.crate.planner.projection.ColumnIndexWriterProjection;
+import io.crate.planner.projection.Projection;
 import io.crate.planner.symbol.Field;
 
 import javax.annotation.Nullable;
+import java.util.ArrayList;
 import java.util.List;
 
 public class DistributedGroupBy implements PlannedAnalyzedRelation, Plan {
 
     private final CollectNode collectNode;
-    private final MergeNode reducerMergeNode;
-    private final MergeNode localMergeNode;
+    private MergeNode reducerMergeNode;
+    private MergeNode localMergeNode;
 
     public DistributedGroupBy(CollectNode collectNode, MergeNode reducerMergeNode, MergeNode localMergeNode) {
         this.collectNode = collectNode;
@@ -85,5 +91,20 @@ public class DistributedGroupBy implements PlannedAnalyzedRelation, Plan {
     @Override
     public Plan plan() {
         return this;
+    }
+
+    @Override
+    public void addProjection(Projection projection) {
+        if(projection instanceof ColumnIndexWriterProjection){
+            //reducerMergeNode().projections().set(reducerMergeNode().projections.size() - 1, projection);
+            List<Projection> reducerProjections = new ArrayList<Projection>(reducerMergeNode().projections().size());
+            reducerProjections.addAll(reducerMergeNode().projections());
+            reducerProjections.set(reducerProjections.size() - 1, projection);
+            reducerMergeNode = PlanNodeBuilder.distributedMerge(collectNode, reducerProjections);
+        } else if (projection instanceof AggregationProjection) {
+            //localMergeNode().projections().set(0, projection);
+            //localMergeNode().projections(ImmutableList.of(projection));
+            localMergeNode = PlanNodeBuilder.localMerge(ImmutableList.of(projection), reducerMergeNode);
+        }
     }
 }
